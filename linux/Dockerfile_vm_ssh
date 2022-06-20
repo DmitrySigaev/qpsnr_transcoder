@@ -1,0 +1,164 @@
+FROM registry.playteam.ru/debian:stable-20210816-217 as build
+
+ARG PROXY_HOST
+ARG NO_PROXY
+ENV HTTP_PROXY $PROXY_HOST
+ENV HTTPS_PROXY $PROXY_HOST
+ENV NO_PROXY $NO_PROXY
+ENV http_proxy $PROXY_HOST
+ENV https_proxy $PROXY_HOST
+ENV no_proxy $NO_PROXY
+ENV HOME /root
+
+
+#build ffmpeg
+# Server users can omit the ffplay and x11grab dependencies: libsdl2-dev libva-dev libvdpau-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev.
+
+RUN apt-get update -qq && apt-get -y install \
+  autoconf \
+  automake \
+  build-essential \
+  cmake \
+  git-core \
+  libass-dev \
+  libfreetype6-dev \
+  libgnutls28-dev \
+  libmp3lame-dev \
+  libtool \
+  libvorbis-dev \
+  meson \
+  ninja-build \
+  pkg-config \
+  texinfo \
+  wget \
+  yasm \
+  zlib1g-dev
+
+RUN mkdir -p ~/ffmpeg_sources ~/bin 
+
+#build nasm
+RUN cd ~/ffmpeg_sources && \
+  wget  --no-check-certificate https://www.nasm.us/pub/nasm/releasebuilds/2.15.05/nasm-2.15.05.tar.bz2 && \
+  tar xjvf nasm-2.15.05.tar.bz2 && \
+  cd nasm-2.15.05 && \
+  ./autogen.sh && \
+  PATH="/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --bindir="/bin" && \
+  make && \
+  make install
+
+#build libx264
+RUN cd ~/ffmpeg_sources && \
+  git -C x264 pull 2> /dev/null || git clone --depth 1 https://code.videolan.org/videolan/x264.git && \
+  cd x264 && \
+  PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" --enable-static --enable-pic && \
+  PATH="$HOME/bin:$PATH" make && \
+  make install
+
+
+#build libdav1d
+RUN apt-get -y install python3-pip && \
+  pip3 install --user meson
+
+# NASM version 2.14 or newer is required for AVX-512 support. See the NASM section for how to install/build. Alternatively, disable AVX-512 in Meson setup with -Denable_avx512=false.
+RUN cd ~/ffmpeg_sources && \
+  git -C dav1d pull 2> /dev/null || git clone --depth 1 https://code.videolan.org/videolan/dav1d.git && \
+  mkdir -p dav1d/build && \
+  cd dav1d/build && \
+  meson setup -Denable_tools=false -Denable_tests=false --default-library=static .. --prefix "$HOME/ffmpeg_build" --libdir="$HOME/ffmpeg_build/lib" && \
+  ninja && \
+  ninja install
+
+#-----------------
+#build libvmaf
+
+RUN cd ~/ffmpeg_sources && \
+  wget --no-check-certificate https://github.com/Netflix/vmaf/archive/v2.1.1.tar.gz && \
+  tar xvf v2.1.1.tar.gz && \
+  mkdir -p vmaf-2.1.1/libvmaf/build &&\
+  cd vmaf-2.1.1/libvmaf/build && \
+  meson setup -Denable_tests=false -Denable_docs=false --buildtype=release --default-library=static .. --prefix "$HOME/ffmpeg_build" --libdir="$HOME/ffmpeg_build/lib" && \
+  ninja && \
+  ninja install
+
+#---------
+#build x265
+
+RUN apt-get -y install libnuma-dev && \
+  cd ~/ffmpeg_sources && \
+  wget --no-check-certificate -O x265.tar.bz2 https://bitbucket.org/multicoreware/x265_git/get/master.tar.bz2 && \
+  tar xjvf x265.tar.bz2 && \
+  cd multicoreware*/build/linux && \
+  PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off ../../source && \
+  PATH="$HOME/bin:$PATH" make && \
+  make install
+
+#---------
+#build libvpx
+
+RUN cd ~/ffmpeg_sources && \
+  git -C libvpx pull 2> /dev/null || git clone --depth 1 https://chromium.googlesource.com/webm/libvpx.git && \
+  cd libvpx && \
+  PATH="$HOME/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=yasm && \
+  PATH="$HOME/bin:$PATH" make && \
+  make install
+
+#---------
+#build libvpx
+
+RUN cd ~/ffmpeg_sources && \
+  git -C aom pull 2> /dev/null || git clone --depth 1 https://aomedia.googlesource.com/aom && \
+  mkdir -p aom_build && \
+  cd aom_build && \
+  PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_TESTS=OFF -DENABLE_NASM=on ../aom && \
+  PATH="$HOME/bin:$PATH" make && \
+  make install
+
+
+
+RUN cd ~/ffmpeg_sources && \
+  git -C ffmpeg pull 2>  /dev/null || git clone --depth 1  https://github.com/DmitrySigaev/FFmpeg.git ffmpeg && \
+  cd ffmpeg && \
+  PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure \
+  --prefix="$HOME/ffmpeg_build" \
+  --pkg-config-flags="--static" \
+  --extra-cflags="-I$HOME/ffmpeg_build/include" \
+  --extra-ldflags="-L$HOME/ffmpeg_build/lib" \
+  --extra-libs="-lpthread -lm" \
+  --ld="g++" \
+  --bindir="$HOME/bin" \
+  --enable-gpl \
+  --enable-libaom \
+  --enable-libdav1d \
+  --enable-libvpx \
+  --enable-libx264 \
+  --enable-libx265 \
+  --enable-nonfree && \
+  PATH="$HOME/bin:$PATH" make && \
+  make install && \
+  hash -r
+
+RUN apt update
+
+
+
+RUN apt-get update -qq && apt-get clean all
+
+RUN apt-get install -y openssh-server gdb ninja-build
+
+RUN mkdir /var/run/sshd
+
+RUN echo 'root:pass' | chpasswd
+
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+
+
+# SSH login fix. Otherwise user is kicked off after login
+
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
+
+RUN /usr/bin/ssh-keygen -A
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]
