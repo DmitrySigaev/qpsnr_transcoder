@@ -85,7 +85,7 @@ RUN cd ~/ffmpeg_sources && \
 
 RUN apt-get -y install libnuma-dev && \
   cd ~/ffmpeg_sources && \
-  git -C x265 pull 2> /dev/null || git clone --depth 1 https://github.com/DmitrySigaev/x265.git && \
+  git -C x265 pull 2> /dev/null || git clone --depth 150 https://github.com/DmitrySigaev/x265.git && \
   cd x265/build/linux && \
  PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off ../../source && \
   PATH="$HOME/bin:$PATH" make && \
@@ -115,7 +115,7 @@ RUN cd ~/ffmpeg_sources && \
 
 
 RUN cd ~/ffmpeg_sources && \
-  git -C ffmpeg pull 2>  /dev/null || git clone --depth 150  https://github.com/DmitrySigaev/FFmpeg.git ffmpeg && \
+  git -C ffmpeg pull 2>  /dev/null || git clone --depth 1  https://github.com/DmitrySigaev/FFmpeg.git ffmpeg && \
   cd ffmpeg && \
   PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure \
   --prefix="$HOME/ffmpeg_build" \
